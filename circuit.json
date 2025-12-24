@@ -1,0 +1,65 @@
+{
+  "components": [
+    {
+      "cid": "f0dd806b38524d7b959e8d6c86985db1",
+      "ctype": "socket",
+      "a": [
+        6,
+        6
+      ],
+      "b": [
+        6,
+        18
+      ],
+      "props": {
+        "V": 6.0,
+        "Iwarn": 5.0
+      },
+      "meta": {}
+    },
+    {
+      "cid": "f40ea6e65f5342d384686fc0971c5dc2",
+      "ctype": "resistor",
+      "a": [
+        6,
+        6
+      ],
+      "b": [
+        30,
+        6
+      ],
+      "props": {
+        "R": 20.0
+      },
+      "meta": {}
+    },
+    {
+      "cid": "36ace8aba5854547a06c35424d9fec66",
+      "ctype": "wire",
+      "a": [
+        30,
+        6
+      ],
+      "b": [
+        30,
+        18
+      ],
+      "props": {},
+      "meta": {}
+    },
+    {
+      "cid": "b813797090b34b4fa1cc1c1d45c4af6a",
+      "ctype": "wire",
+      "a": [
+        30,
+        18
+      ],
+      "b": [
+        6,
+        18
+      ],
+      "props": {},
+      "meta": {}
+    }
+  ]
+}
