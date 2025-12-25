@@ -9,6 +9,7 @@ Circuit Simulator Core
 """
 
 import json
+import math
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
@@ -694,20 +695,47 @@ def goal_seek_parameter(
 
     out = GoalSeekResult(ok=False, target=float(target))
 
+    cache: Dict[float, Tuple[Optional[float], Optional[float]]] = {}
+
     def eval_err(x: float) -> Tuple[Optional[float], Optional[float]]:
-        comp.props[var_prop] = float(x)
+        xf = float(x)
+        if xf in cache:
+            return cache[xf]
+        comp.props[var_prop] = xf
         res = solve_circuit(cir)
         if not res.ok:
+            cache[xf] = (None, None)
             return None, None
         if reject_if_overcurrent and any(v == "source_overcurrent" for v in res.comp_flags.values()):
+            cache[xf] = (None, None)
             return None, None
         mv = _goal_measure(res, cir, measure)
         if mv is None:
+            cache[xf] = (None, None)
             return None, None
-        return float(mv - target), float(mv)
+        mvf = float(mv)
+        if not math.isfinite(mvf):
+            cache[xf] = (None, None)
+            return None, None
+        err = float(mvf - target)
+        if not math.isfinite(err):
+            cache[xf] = (None, None)
+            return None, None
+        cache[xf] = (err, mvf)
+        return err, mvf
 
     e_lo, m_lo = eval_err(lo)
     e_hi, m_hi = eval_err(hi)
+
+    if method == "auto" and (e_lo is None or e_hi is None):
+        mid0 = 0.5 * (lo + hi)
+        e_mid, m_mid = eval_err(mid0)
+        if e_mid is not None and m_mid is not None:
+            if e_lo is None:
+                lo, e_lo, m_lo = mid0, e_mid, m_mid
+            elif e_hi is None:
+                hi, e_hi, m_hi = mid0, e_mid, m_mid
+
     if e_lo is None or e_hi is None:
         comp.props[var_prop] = prev
         return GoalSeekResult(ok=False, message="evaluation failed at bounds")
@@ -720,6 +748,44 @@ def goal_seek_parameter(
         return abs(err) <= tol
 
     bracketed = (e_lo == 0.0) or (e_hi == 0.0) or (e_lo < 0.0 < e_hi) or (e_hi < 0.0 < e_lo)
+
+    if method == "auto" and not bracketed:
+        lo0, hi0 = float(lo), float(hi)
+        e_lo0, e_hi0 = float(e_lo), float(e_hi)
+        m_lo0, m_hi0 = float(m_lo), float(m_hi)
+
+        lo2, hi2 = float(lo0), float(hi0)
+        for _ in range(12):
+            if (e_lo0 == 0.0) or (e_hi0 == 0.0) or (e_lo0 < 0.0 < e_hi0) or (e_hi0 < 0.0 < e_lo0):
+                lo, hi = float(lo2), float(hi2)
+                e_lo, e_hi = float(e_lo0), float(e_hi0)
+                m_lo, m_hi = float(m_lo0), float(m_hi0)
+                bracketed = True
+                break
+
+            if lo2 > 0.0 and hi2 > 0.0 and str(var_prop).upper() == "R":
+                lo2 = max(lo2 / 10.0, 1e-12)
+                hi2 = hi2 * 10.0
+            else:
+                c = 0.5 * (lo2 + hi2)
+                w = (hi2 - lo2)
+                if abs(w) < 1e-15:
+                    w = max(abs(c), 1.0)
+                lo2 = c - 2.0 * w
+                hi2 = c + 2.0 * w
+
+            e_lo_t, m_lo_t = eval_err(lo2)
+            e_hi_t, m_hi_t = eval_err(hi2)
+            if e_lo_t is not None and m_lo_t is not None:
+                e_lo0, m_lo0 = float(e_lo_t), float(m_lo_t)
+            if e_hi_t is not None and m_hi_t is not None:
+                e_hi0, m_hi0 = float(e_hi_t), float(m_hi_t)
+
+        if not bracketed:
+            lo, hi = float(lo0), float(hi0)
+            e_lo, e_hi = float(e_lo), float(e_hi)
+            m_lo, m_hi = float(m_lo), float(m_hi)
+
     use_bisect = (method in ("auto", "bisect")) and bracketed
 
     x0, x1 = float(lo), float(hi)
@@ -730,6 +796,8 @@ def goal_seek_parameter(
     best_x = float(lo)
     best_m = float(m_lo)
     best_err = float(e_lo)
+
+    fail_reason = "failed"
 
     for it in range(int(max_iter)):
         out.iterations = it + 1
@@ -742,6 +810,7 @@ def goal_seek_parameter(
             mid = 0.5 * (a + b)
             fm, mm = eval_err(mid)
             if fm is None or mm is None:
+                fail_reason = "evaluation failed during bisection"
                 break
             out.history.append((float(mid), float(mm)))
             if abs(fm) < abs(best_err):
@@ -768,14 +837,18 @@ def goal_seek_parameter(
             continue
 
         if (y1 - y0) == 0.0:
+            fail_reason = "secant slope is zero"
             break
         x2 = x1 - y1 * (x1 - x0) / (y1 - y0)
         if x2 < lo:
             x2 = lo
         if x2 > hi:
             x2 = hi
+        if abs(x2 - x1) <= max(1e-15, 1e-12 * max(1.0, abs(x1))):
+            x2 = 0.5 * (x0 + x1)
         y2, m2 = eval_err(x2)
         if y2 is None or m2 is None:
+            fail_reason = "evaluation failed during secant"
             break
         out.history.append((float(x2), float(m2)))
         if abs(y2) < abs(best_err):
@@ -795,7 +868,10 @@ def goal_seek_parameter(
     out.value = float(best_x)
     out.achieved = float(best_m if best_m is not None else 0.0)
     out.error = float(best_err)
-    out.message = "failed"
+    if method == "auto" and not bracketed:
+        out.message = "failed: not bracketed"
+    else:
+        out.message = fail_reason
     return out
 
 def format_si(x: float, unit: str) -> str:

@@ -167,9 +167,10 @@ I18N: Dict[str, Dict[str, str]] = {
         "opt_fmt_si": "SI",
         "opt_fmt_sci": "Scientific",
         "opt_sig": "Significant digits",
-        "opt_max_abs": "Max abs (">" marker)",
+        "opt_max_abs": "Max abs (> marker)",
         "opt_min_abs": "Min abs (~0 marker)",
         "opt_show_shortcuts": "Show shortcuts card",
+        "opt_show_labels": "Show value labels on canvas",
         "opt_defaults": "Defaults",
         "opt_def_source_v": "Source V",
         "opt_def_source_iwarn": "Source Iwarn",
@@ -182,6 +183,8 @@ I18N: Dict[str, Dict[str, str]] = {
         "opt_def_gal_r": "Galv Rcoil",
         "opt_def_gal_ifs": "Galv Ifs",
         "apply": "Apply",
+        "options": "⚙ Options",
+        "locked": "Locked",
     },
     "zh": {
         "app_title": "电路模拟器 - GUI",
@@ -331,6 +334,7 @@ I18N: Dict[str, Dict[str, str]] = {
         "opt_max_abs": "极大阈值(>标注)",
         "opt_min_abs": "极小阈值(~0标注)",
         "opt_show_shortcuts": "显示快捷卡片",
+        "opt_show_labels": "在画布显示数值标签",
         "opt_defaults": "默认参数",
         "opt_def_source_v": "电源电压 V",
         "opt_def_source_iwarn": "电源过流阈值 A",
@@ -343,6 +347,8 @@ I18N: Dict[str, Dict[str, str]] = {
         "opt_def_gal_r": "检流计 Rcoil",
         "opt_def_gal_ifs": "检流计 Ifs",
         "apply": "应用",
+        "options": "⚙ 选项",
+        "locked": "已锁定",
     },
 }
 
@@ -377,6 +383,9 @@ class CircuitGUI:
         self._drag_moved: bool = False
 
         self._rslider_after_id: Optional[str] = None
+        self._wheel_after_id: Optional[str] = None
+
+        self._slider_after_id: Optional[str] = None
 
         self._fmt_style: str = "si"
         self._fmt_sig: int = 3
@@ -384,11 +393,18 @@ class CircuitGUI:
         self._fmt_min_abs: float = 1e-15
 
         self._opt_show_shortcuts: bool = True
+        self._opt_show_labels: bool = True
+
+        self._options_win: Optional[tk.Toplevel] = None
 
         self.defaults: Dict[str, float] = {
             "socket_V": 5.0,
             "socket_Iwarn": 5.0,
+            "socket_Vmin": 0.0,
+            "socket_Vmax": 12.0,
             "resistor_R": 100.0,
+            "resistor_Rmin": 1.0,
+            "resistor_Rmax": 1e6,
             "rheostat_R": 200.0,
             "rheostat_Rmin": 0.0,
             "rheostat_Rmax": 500.0,
@@ -408,6 +424,30 @@ class CircuitGUI:
         self.solve()
         self.redraw()
 
+    def open_options(self):
+        if self._options_win is not None:
+            try:
+                self._options_win.deiconify()
+                self._options_win.lift()
+                return
+            except Exception:
+                self._options_win = None
+
+        win = tk.Toplevel(self.root)
+        self._options_win = win
+        win.title(self.tr("tab_options"))
+        win.geometry("360x620")
+        win.transient(self.root)
+
+        def on_close():
+            try:
+                win.destroy()
+            finally:
+                self._options_win = None
+
+        win.protocol("WM_DELETE_WINDOW", on_close)
+        self._build_options(win)
+
     def fmt(self, x: float, unit: str) -> str:
         return format_value(
             x,
@@ -417,6 +457,11 @@ class CircuitGUI:
             min_abs=float(self._fmt_min_abs),
             sig=int(self._fmt_sig),
         )
+
+    def _mid_canvas(self, comp: Component) -> Tuple[int, int]:
+        x1, y1 = self.grid_to_canvas(comp.a)
+        x2, y2 = self.grid_to_canvas(comp.b)
+        return (x1 + x2) // 2, (y1 + y2) // 2
 
     def _is_locked(self, comp: Component) -> bool:
         try:
@@ -477,6 +522,8 @@ class CircuitGUI:
             w["btn_load"].config(text=self.tr("load"))
         if w.get("btn_clear"):
             w["btn_clear"].config(text=self.tr("clear_all"))
+        if w.get("btn_options"):
+            w["btn_options"].config(text=self.tr("options"))
         if w.get("lbl_lang"):
             w["lbl_lang"].config(text=self.tr("language") + ":")
         if w.get("lang_cb"):
@@ -500,10 +547,9 @@ class CircuitGUI:
             except Exception:
                 pass
 
-        if w.get("tab_inspector") and w.get("notebook"):
+        if self._options_win is not None:
             try:
-                w["notebook"].tab(w["tab_inspector"], text=self.tr("tab_inspector"))
-                w["notebook"].tab(w["tab_options"], text=self.tr("tab_options"))
+                self._options_win.title(self.tr("tab_options"))
             except Exception:
                 pass
         for k in (
@@ -611,6 +657,7 @@ class CircuitGUI:
         btn_save = ttk.Button(left_panel, text=self.tr("save"), command=self.save)
         btn_load = ttk.Button(left_panel, text=self.tr("load"), command=self.load)
         btn_clear = ttk.Button(left_panel, text=self.tr("clear_all"), command=self.clear_all)
+        btn_options = ttk.Button(left_panel, text=self.tr("options"), command=self.open_options)
 
         btn_solve.pack(fill=tk.X, pady=2, padx=5)
         btn_goal_seek.pack(fill=tk.X, pady=2, padx=5)
@@ -619,6 +666,7 @@ class CircuitGUI:
         btn_save.pack(fill=tk.X, pady=2, padx=5)
         btn_load.pack(fill=tk.X, pady=2, padx=5)
         btn_clear.pack(fill=tk.X, pady=2, padx=5)
+        btn_options.pack(fill=tk.X, pady=(8, 2), padx=5)
 
         self._i18n_widgets["btn_solve"] = btn_solve
         self._i18n_widgets["btn_goal_seek"] = btn_goal_seek
@@ -627,25 +675,13 @@ class CircuitGUI:
         self._i18n_widgets["btn_save"] = btn_save
         self._i18n_widgets["btn_load"] = btn_load
         self._i18n_widgets["btn_clear"] = btn_clear
+        self._i18n_widgets["btn_options"] = btn_options
 
-        nb = ttk.Notebook(left_panel)
-        nb.pack(fill=tk.BOTH, expand=True, pady=10, padx=5)
-        self._i18n_widgets["notebook"] = nb
-
-        tab_ins = ttk.Frame(nb)
-        tab_opt = ttk.Frame(nb)
-        nb.add(tab_ins, text=self.tr("tab_inspector"))
-        nb.add(tab_opt, text=self.tr("tab_options"))
-        self._i18n_widgets["tab_inspector"] = tab_ins
-        self._i18n_widgets["tab_options"] = tab_opt
-
-        self.inspector = ttk.Labelframe(tab_ins, text=self.tr("inspector"))
-        self.inspector.pack(fill=tk.BOTH, expand=True)
+        self.inspector = ttk.Labelframe(left_panel, text=self.tr("inspector"))
+        self.inspector.pack(fill=tk.BOTH, expand=True, pady=10, padx=5)
         self.inspector_body = ttk.Frame(self.inspector)
         self.inspector_body.pack(fill=tk.BOTH, expand=True)
         self._i18n_widgets["inspector"] = self.inspector
-
-        self._build_options(tab_opt)
         
         right_frame = ttk.Frame(main_frame)
         right_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -918,7 +954,7 @@ class CircuitGUI:
             return
 
         ch = getattr(event, "char", "") or ""
-        if ch in "123456789" and not (event.state & 0x4):
+        if (len(ch) == 1) and ch.isdigit() and (ch != "0") and not (event.state & 0x4):
             mapping = [
                 "wire",
                 "resistor",
@@ -1044,7 +1080,7 @@ class CircuitGUI:
         comp = self.cir.find_near(grid_pos)
         self.selected_comp = comp
         if comp and comp.ctype != "button_momentary":
-            self._begin_drag_candidate(comp, grid_pos)
+            self._begin_drag_candidate(comp, grid_pos, canvas_xy=(event.x, event.y))
         if comp and comp.ctype == "button_momentary":
             comp.props["pressed"] = 1
             self.solve()
@@ -1055,8 +1091,9 @@ class CircuitGUI:
     def on_canvas_release(self, _event):
         if self._drag_active:
             comp = self._drag_comp
+            kind = self._drag_kind
             moved = self._end_drag()
-            if not moved and comp is not None:
+            if (not moved) and comp is not None and kind not in ("rslider", "vslider", "reslider"):
                 self._click_component(comp)
             return
         comp = self.selected_comp
@@ -1084,6 +1121,7 @@ class CircuitGUI:
             comp.props["throw"] = int((th + 1) % 3)
             changed = True
         if changed:
+            self._inspector_comp_id = None
             self.solve()
             self._record_history()
             self.redraw()
@@ -1091,8 +1129,6 @@ class CircuitGUI:
     def on_canvas_mousewheel(self, event):
         comp = self.hover_comp or self.selected_comp
         if not comp:
-            return
-        if comp.ctype != "rheostat":
             return
         if self._is_locked(comp):
             return
@@ -1102,20 +1138,65 @@ class CircuitGUI:
             delta = 0
         if delta == 0:
             return
-        step = 1.0 if delta > 0 else -1.0
-        if (getattr(event, "state", 0) & 0x1) != 0:
-            step *= 10.0
-        R = float(comp.props.get("R", 100.0))
-        Rmin = float(comp.props.get("Rmin", 0.0))
-        Rmax = float(comp.props.get("Rmax", max(R, 100.0)))
-        if Rmax < Rmin:
-            Rmin, Rmax = Rmax, Rmin
-        R2 = R + step
-        if R2 < Rmin:
-            R2 = Rmin
-        if R2 > Rmax:
-            R2 = Rmax
-        comp.props["R"] = float(R2)
+
+        shift = (getattr(event, "state", 0) & 0x1) != 0
+
+        changed = False
+        if comp.ctype == "rheostat":
+            step = 1.0 if delta > 0 else -1.0
+            if shift:
+                step *= 10.0
+            R = float(comp.props.get("R", self.defaults.get("rheostat_R", 200.0)))
+            Rmin = float(comp.props.get("Rmin", self.defaults.get("rheostat_Rmin", 0.0)))
+            Rmax = float(comp.props.get("Rmax", self.defaults.get("rheostat_Rmax", max(R, 100.0))))
+            if Rmax < Rmin:
+                Rmin, Rmax = Rmax, Rmin
+            R2 = R + step
+            if R2 < Rmin:
+                R2 = Rmin
+            if R2 > Rmax:
+                R2 = Rmax
+            comp.props["R"] = float(R2)
+            changed = True
+        elif comp.ctype == "socket":
+            step = 0.1 if delta > 0 else -0.1
+            if shift:
+                step *= 10.0
+            V = float(comp.props.get("V", self.defaults.get("socket_V", 5.0)))
+            comp.props["V"] = float(V + step)
+            changed = True
+        elif comp.ctype == "resistor":
+            step = 1.0 if delta > 0 else -1.0
+            if shift:
+                step *= 10.0
+            R = float(comp.props.get("R", self.defaults.get("resistor_R", 100.0)))
+            R2 = R + step
+            if R2 < 0.01:
+                R2 = 0.01
+            comp.props["R"] = float(R2)
+            changed = True
+        elif comp.ctype in ("ammeter", "voltmeter", "galvanometer"):
+            rngs = meter_ranges(comp)
+            if rngs:
+                cur = int(comp.props.get("range", 0))
+                cur = max(0, min(cur, len(rngs) - 1))
+                nxt = cur + (1 if delta > 0 else -1)
+                nxt = max(0, min(nxt, len(rngs) - 1))
+                if nxt != cur:
+                    comp.props["range"] = int(nxt)
+                    changed = True
+
+        if not changed:
+            return
+        if self._wheel_after_id is not None:
+            try:
+                self.root.after_cancel(self._wheel_after_id)
+            except Exception:
+                pass
+        self._wheel_after_id = self.root.after(60, self._apply_wheel_change)
+
+    def _apply_wheel_change(self):
+        self._wheel_after_id = None
         self.solve()
         self._record_history()
         self.redraw()
@@ -1133,7 +1214,11 @@ class CircuitGUI:
 
         comp = self._drag_comp
         if self._drag_kind == "rslider":
-            self._update_rheostat_slider(comp, grid_pos)
+            self._update_rheostat_slider(comp, event.x, event.y)
+        elif self._drag_kind == "vslider":
+            self._update_socket_slider(comp, event.x, event.y)
+        elif self._drag_kind == "reslider":
+            self._update_resistor_slider(comp, event.x, event.y)
         elif self._drag_kind == "whole":
             if self._drag_start_a is None or self._drag_start_b is None:
                 return
@@ -1150,27 +1235,28 @@ class CircuitGUI:
         self._pending_motion_grid = None
         self.redraw()
 
-    def _begin_drag_candidate(self, comp: Component, grid_pos: Point):
+    def _begin_drag_candidate(self, comp: Component, grid_pos: Point, *, canvas_xy: Optional[Tuple[int, int]] = None):
         if self._is_locked(comp):
             return
 
-        if comp.ctype == "rheostat":
-            mx = int(round((comp.a[0] + comp.b[0]) / 2))
-            my = int(round((comp.a[1] + comp.b[1]) / 2))
-            if abs(grid_pos[0] - mx) + abs(grid_pos[1] - my) <= 1:
-                kind = "rslider"
-                self._drag_active = True
-                self._drag_comp = comp
-                self._drag_kind = kind
-                self._drag_start_grid = grid_pos
-                self._drag_start_a = comp.a
-                self._drag_start_b = comp.b
-                self._drag_moved = False
-                try:
-                    self.canvas.config(cursor="sb_h_double_arrow")
-                except Exception:
-                    pass
-                return
+        if canvas_xy is not None:
+            cx, cy = canvas_xy
+            c_mx, c_my = self._mid_canvas(comp)
+
+            if comp.ctype == "rheostat":
+                if abs(cy - (c_my + 14)) <= 8 and abs(cx - c_mx) <= 22:
+                    self._start_slider_drag(comp, grid_pos, "rslider")
+                    return
+
+            if comp.ctype == "socket":
+                if abs(cy - (c_my + 22)) <= 10 and abs(cx - c_mx) <= 26:
+                    self._start_slider_drag(comp, grid_pos, "vslider")
+                    return
+
+            if comp.ctype == "resistor":
+                if abs(cy - (c_my + 18)) <= 10 and abs(cx - c_mx) <= 30:
+                    self._start_slider_drag(comp, grid_pos, "reslider")
+                    return
 
         da = abs(comp.a[0] - grid_pos[0]) + abs(comp.a[1] - grid_pos[1])
         db = abs(comp.b[0] - grid_pos[0]) + abs(comp.b[1] - grid_pos[1])
@@ -1190,6 +1276,19 @@ class CircuitGUI:
         self._drag_moved = False
         try:
             self.canvas.config(cursor="fleur" if kind == "whole" else "crosshair")
+        except Exception:
+            pass
+
+    def _start_slider_drag(self, comp: Component, grid_pos: Point, kind: str):
+        self._drag_active = True
+        self._drag_comp = comp
+        self._drag_kind = kind
+        self._drag_start_grid = grid_pos
+        self._drag_start_a = comp.a
+        self._drag_start_b = comp.b
+        self._drag_moved = False
+        try:
+            self.canvas.config(cursor="sb_h_double_arrow")
         except Exception:
             pass
 
@@ -1224,6 +1323,12 @@ class CircuitGUI:
         self._drag_start_a = None
         self._drag_start_b = None
         self._drag_moved = False
+        if moved and self._slider_after_id is not None:
+            try:
+                self.root.after_cancel(self._slider_after_id)
+            except Exception:
+                pass
+            self._slider_after_id = None
         if moved:
             self.solve()
             self._record_history()
@@ -1234,37 +1339,72 @@ class CircuitGUI:
             pass
         return moved
 
-    def _update_rheostat_slider(self, comp: Component, grid_pos: Point):
+    def _schedule_slider_solve(self):
+        if self._slider_after_id is not None:
+            try:
+                self.root.after_cancel(self._slider_after_id)
+            except Exception:
+                pass
+        self._slider_after_id = self.root.after(60, self.solve_and_redraw)
+
+
+    def _update_rheostat_slider(self, comp: Component, cx: int, cy: int):
         Rmin = float(comp.props.get("Rmin", self.defaults.get("rheostat_Rmin", 0.0)))
         Rmax = float(comp.props.get("Rmax", self.defaults.get("rheostat_Rmax", 500.0)))
         if Rmax < Rmin:
             Rmin, Rmax = Rmax, Rmin
         if abs(Rmax - Rmin) < 1e-12:
             return
+        mx, my = self._mid_canvas(comp)
         horizontal = abs(comp.b[0] - comp.a[0]) >= abs(comp.b[1] - comp.a[1])
         if horizontal:
-            lo = min(comp.a[0], comp.b[0])
-            hi = max(comp.a[0], comp.b[0])
-            if hi == lo:
-                return
-            t = (grid_pos[0] - lo) / float(hi - lo)
+            t = (cx - (mx - 12)) / float((mx + 12) - (mx - 12))
         else:
-            lo = min(comp.a[1], comp.b[1])
-            hi = max(comp.a[1], comp.b[1])
-            if hi == lo:
-                return
-            t = (grid_pos[1] - lo) / float(hi - lo)
+            t = (cy - (my - 12)) / float((my + 12) - (my - 12))
         if t < 0.0:
             t = 0.0
         if t > 1.0:
             t = 1.0
         comp.props["R"] = float(Rmin + t * (Rmax - Rmin))
-        if self._rslider_after_id is not None:
-            try:
-                self.root.after_cancel(self._rslider_after_id)
-            except Exception:
-                pass
-        self._rslider_after_id = self.root.after(60, self.solve_and_redraw)
+        self._drag_moved = True
+        self._schedule_slider_solve()
+
+    def _update_socket_slider(self, comp: Component, cx: int, _cy: int):
+        Vmin = float(self.defaults.get("socket_Vmin", 0.0))
+        Vmax = float(self.defaults.get("socket_Vmax", 12.0))
+        if Vmax < Vmin:
+            Vmin, Vmax = Vmax, Vmin
+        if abs(Vmax - Vmin) < 1e-12:
+            return
+        mx, my = self._mid_canvas(comp)
+        t = (cx - (mx - 18)) / float((mx + 18) - (mx - 18))
+        if t < 0.0:
+            t = 0.0
+        if t > 1.0:
+            t = 1.0
+        comp.props["V"] = float(Vmin + t * (Vmax - Vmin))
+        self._drag_moved = True
+        self._schedule_slider_solve()
+
+    def _update_resistor_slider(self, comp: Component, cx: int, _cy: int):
+        Rmin = float(self.defaults.get("resistor_Rmin", 1.0))
+        Rmax = float(self.defaults.get("resistor_Rmax", 1e6))
+        if Rmax < Rmin:
+            Rmin, Rmax = Rmax, Rmin
+        if Rmin <= 0.0:
+            Rmin = 1e-6
+        if abs(math.log10(Rmax) - math.log10(Rmin)) < 1e-12:
+            return
+        mx, my = self._mid_canvas(comp)
+        t = (cx - (mx - 22)) / float((mx + 22) - (mx - 22))
+        if t < 0.0:
+            t = 0.0
+        if t > 1.0:
+            t = 1.0
+        logr = math.log10(Rmin) + t * (math.log10(Rmax) - math.log10(Rmin))
+        comp.props["R"] = float(10 ** logr)
+        self._drag_moved = True
+        self._schedule_slider_solve()
 
     def _translate_component(self, comp: Component, dx: int, dy: int, *, base_a: Point, base_b: Point):
         comp.a = (base_a[0] + dx, base_a[1] + dy)
@@ -1629,6 +1769,25 @@ class CircuitGUI:
             outline = "red" if flag == "source_overcurrent" else "black"
             self.canvas.create_rectangle(mx-15, my-15, mx+15, my+15, fill=bg_color, outline=outline, width=2)
             self.canvas.create_text(mx, my, text=symbol, font=("Arial", 16, "bold"))
+            if is_selected or is_hover:
+                Vmin = float(self.defaults.get("socket_Vmin", 0.0))
+                Vmax = float(self.defaults.get("socket_Vmax", 12.0))
+                if Vmax < Vmin:
+                    Vmin, Vmax = Vmax, Vmin
+                V = float(comp.props.get("V", self.defaults.get("socket_V", 5.0)))
+                t = 0.0
+                if abs(Vmax - Vmin) > 1e-12:
+                    t = (V - Vmin) / (Vmax - Vmin)
+                if t < 0.0:
+                    t = 0.0
+                if t > 1.0:
+                    t = 1.0
+                x0, y0 = mx - 18, my + 22
+                x1, y1 = mx + 18, my + 22
+                self.canvas.create_line(x0, y0, x1, y1, fill="#777", width=2)
+                kx = int(x0 + t * (x1 - x0))
+                self.canvas.create_oval(kx-4, y0-4, kx+4, y0+4, fill="#1e88e5", outline="")
+                self.canvas.create_text(mx, my + 34, text=self.fmt(V, "V"), font=("Arial", 8), fill="#444")
         elif comp.ctype == "bulb":
             Va = self.result.node_v.get(comp.a, 0.0)
             Vb = self.result.node_v.get(comp.b, 0.0)
@@ -1648,16 +1807,52 @@ class CircuitGUI:
         elif comp.ctype == "resistor":
             self.canvas.create_rectangle(mx-20, my-8, mx+20, my+8, fill=bg_color, outline="black", width=2)
             self.canvas.create_text(mx, my, text=symbol, font=("Arial", 14, "bold"))
+            if is_selected or is_hover:
+                Rmin = float(self.defaults.get("resistor_Rmin", 1.0))
+                Rmax = float(self.defaults.get("resistor_Rmax", 1e6))
+                if Rmax < Rmin:
+                    Rmin, Rmax = Rmax, Rmin
+                if Rmin <= 0.0:
+                    Rmin = 1e-6
+                R = float(comp.props.get("R", self.defaults.get("resistor_R", 100.0)))
+                t = 0.0
+                if abs(math.log10(Rmax) - math.log10(Rmin)) > 1e-12 and R > 0:
+                    t = (math.log10(R) - math.log10(Rmin)) / (math.log10(Rmax) - math.log10(Rmin))
+                if t < 0.0:
+                    t = 0.0
+                if t > 1.0:
+                    t = 1.0
+                x0, y0 = mx - 22, my + 18
+                x1, y1 = mx + 22, my + 18
+                self.canvas.create_line(x0, y0, x1, y1, fill="#777", width=2)
+                kx = int(x0 + t * (x1 - x0))
+                self.canvas.create_oval(kx-4, y0-4, kx+4, y0+4, fill="#1e88e5", outline="")
+                self.canvas.create_text(mx, my + 30, text=self.fmt(R, "Ω"), font=("Arial", 8), fill="#444")
         elif comp.ctype in ("ammeter", "voltmeter", "galvanometer"):
             self.canvas.create_oval(mx-12, my-12, mx+12, my+12, fill=bg_color, outline="black", width=2)
             self.canvas.create_arc(mx-14, my-14, mx+14, my+14, start=120, extent=300, style=tk.ARC, outline="#666", width=1)
-            for t in (0.0, 0.25, 0.5, 0.75, 1.0):
+            fsd = meter_native_full_scale(comp)
+            unit = "V" if comp.ctype == "voltmeter" else "A"
+            for i in range(0, 21):
+                t = i / 20.0
                 ang = (-120.0 + 240.0 * t) * math.pi / 180.0
-                x0 = mx + int(10 * math.cos(ang))
-                y0 = my + int(10 * math.sin(ang))
-                x1t = mx + int(13 * math.cos(ang))
-                y1t = my + int(13 * math.sin(ang))
-                self.canvas.create_line(x0, y0, x1t, y1t, fill="#555", width=1)
+                major = (i % 5) == 0
+                r0 = 9 if major else 11
+                r1 = 14
+                x0 = mx + int(r0 * math.cos(ang))
+                y0 = my + int(r0 * math.sin(ang))
+                x1t = mx + int(r1 * math.cos(ang))
+                y1t = my + int(r1 * math.sin(ang))
+                self.canvas.create_line(x0, y0, x1t, y1t, fill="#555", width=2 if major else 1)
+                if major:
+                    if fsd is None:
+                        lab = "0" if i == 0 else "" 
+                    else:
+                        lab = self.fmt(0.0, unit) if i == 0 else self.fmt(float(fsd) / 2.0, unit) if i == 10 else self.fmt(float(fsd), unit) if i == 20 else ""
+                    if lab:
+                        xr = mx + int(17 * math.cos(ang))
+                        yr = my + int(17 * math.sin(ang))
+                        self.canvas.create_text(xr, yr, text=lab, font=("Arial", 7), fill="#444")
             self.canvas.create_text(mx, my + 1, text=symbol, font=("Arial", 12, "bold"))
         elif comp.ctype == "rheostat":
             self.canvas.create_oval(mx-10, my-10, mx+10, my+10, fill=bg_color, outline="black", width=2)
@@ -1707,6 +1902,9 @@ class CircuitGUI:
                 ol = (fs is not None and abs(val) > abs(fs) * 1.02)
                 reading = self.tr("ol") if ol else self.fmt(val, "A")
 
+            if ol:
+                self.canvas.create_arc(mx-14, my-14, mx+14, my+14, start=120, extent=300, style=tk.ARC, outline="#d32f2f", width=2)
+
             ratio = 0.0
             if fs is not None and abs(fs) > 1e-15:
                 ratio = abs(val) / abs(fs)
@@ -1731,6 +1929,55 @@ class CircuitGUI:
             
             self.canvas.create_text(mx, my + 20, text=reading, font=("Arial", 9), fill="darkred")
 
+        if getattr(self, "_opt_show_labels", True):
+            self._draw_canvas_value_label(comp, mx, my)
+
+    def _draw_canvas_value_label(self, comp: Component, mx: int, my: int):
+        if not (self.selected_comp and self.selected_comp.cid == comp.cid) and not (self.hover_comp and self.hover_comp.cid == comp.cid):
+            return
+        lines: List[str] = []
+        if comp.ctype == "socket":
+            try:
+                V = float(comp.props.get("V", self.defaults.get("socket_V", 5.0)))
+                lines.append(f"V={self.fmt(V, 'V')}")
+            except Exception:
+                pass
+        if comp.ctype == "resistor":
+            try:
+                R = float(comp.props.get("R", self.defaults.get("resistor_R", 100.0)))
+                lines.append(f"R={self.fmt(R, 'Ω')}")
+            except Exception:
+                pass
+        if comp.ctype == "rheostat":
+            try:
+                R = float(comp.props.get("R", self.defaults.get("rheostat_R", 200.0)))
+                lines.append(f"R={self.fmt(R, 'Ω')}")
+            except Exception:
+                pass
+        if comp.ctype in ("ammeter", "galvanometer") and self.result.ok:
+            Iab = self.result.comp_i.get(comp.cid, 0.0)
+            fs = meter_native_full_scale(comp)
+            ol = (fs is not None and abs(Iab) > abs(fs) * 1.02)
+            lines.append((self.tr("ol") if ol else self.fmt(Iab, "A")))
+        if comp.ctype == "voltmeter" and self.result.ok:
+            Va = self.result.node_v.get(comp.a, 0.0)
+            Vb = self.result.node_v.get(comp.b, 0.0)
+            Vab = Va - Vb
+            fs = meter_native_full_scale(comp)
+            ol = (fs is not None and abs(Vab) > abs(fs) * 1.02)
+            lines.append((self.tr("ol") if ol else self.fmt(Vab, "V")))
+        if not lines:
+            return
+        text = "\n".join(lines)
+        x = mx + 18
+        y = my - 18
+        tid = self.canvas.create_text(x, y, text=text, font=("Arial", 9, "bold"), fill="#111", anchor="nw")
+        bb = self.canvas.bbox(tid)
+        if bb:
+            pad = 3
+            self.canvas.create_rectangle(bb[0]-pad, bb[1]-pad, bb[2]+pad, bb[3]+pad, fill="#ffffff", outline="#c8c8c8")
+            self.canvas.tag_raise(tid)
+
     def update_info_panel(self):
         cards = getattr(self, "_status_cards", {})
         if not cards:
@@ -1744,6 +1991,8 @@ class CircuitGUI:
         if comp_sel:
             sel_lines.append(f"{self.tr('selected')}: {comp_sel.display_name()}")
             sel_lines.append(f"{self.tr('info_type')}: {self._tr_comp(comp_sel.ctype)}")
+            if self._is_locked(comp_sel):
+                sel_lines.append(f"{self.tr('locked')}")
         else:
             sel_lines.append(f"{self.tr('selected')}: {self.tr('none')}")
         if comp_hover and (not comp_sel or comp_hover.cid != comp_sel.cid):
@@ -1762,21 +2011,21 @@ class CircuitGUI:
             meas_lines: List[str] = []
             if comp.ctype in ("ammeter", "galvanometer"):
                 fs = meter_native_full_scale(comp)
-                reading = self.tr("ol") if (fs is not None and abs(Iab) > abs(fs) * 1.02) else format_si_safe(Iab, "A")
+                reading = self.tr("ol") if (fs is not None and abs(Iab) > abs(fs) * 1.02) else self.fmt(Iab, "A")
                 meas_lines.append(f"{self.tr('info_current')}: {reading}")
             elif comp.ctype == "voltmeter":
                 fs = meter_native_full_scale(comp)
-                reading = self.tr("ol") if (fs is not None and abs(Vab) > abs(fs) * 1.02) else format_si_safe(Vab, "V")
+                reading = self.tr("ol") if (fs is not None and abs(Vab) > abs(fs) * 1.02) else self.fmt(Vab, "V")
                 meas_lines.append(f"{self.tr('info_voltage')}: {reading}")
             else:
-                meas_lines.append(f"{self.tr('info_voltage')}: {format_si_safe(Vab, 'V')}")
-                meas_lines.append(f"{self.tr('info_current')}: {format_si_safe(Iab, 'A')}")
-            meas_lines.append(f"{self.tr('info_power')}: {format_si_safe(P, 'W')}")
+                meas_lines.append(f"{self.tr('info_voltage')}: {self.fmt(Vab, 'V')}")
+                meas_lines.append(f"{self.tr('info_current')}: {self.fmt(Iab, 'A')}")
+            meas_lines.append(f"{self.tr('info_power')}: {self.fmt(P, 'W')}")
             if comp.ctype in ("ammeter", "voltmeter", "galvanometer"):
                 fs = meter_full_scale(comp)
                 if fs is not None:
                     unit = "V" if comp.ctype == "voltmeter" else "A"
-                    meas_lines.append(f"{self.tr('range')}: {format_si_safe(fs, unit)}")
+                    meas_lines.append(f"{self.tr('range')}: {self.fmt(fs, unit)}")
             cards["meas"]["value"].config(text="\n".join(meas_lines))
         else:
             cards["meas"]["value"].config(text=self.tr("hover_hint"))
@@ -1800,6 +2049,7 @@ class CircuitGUI:
                 "G: " + self.tr("goal_seek"),
                 "W/N: " + self.tr("wire_tool") + "/" + self.tr("navigate"),
                 "Wheel@Rheo: ΔR (Shift x10)",
+                "Wheel@Src/Res/Meter: adjust",
             ]))
         else:
             try:
@@ -1833,11 +2083,12 @@ class CircuitGUI:
     def _build_options(self, parent):
         w = self._i18n_widgets
 
-        self._var_fmt = tk.StringVar(value="si")
+        self._var_fmt = tk.StringVar(value=str(self._fmt_style or "si"))
         self._var_sig = tk.IntVar(value=int(self._fmt_sig))
         self._var_max = tk.StringVar(value=str(self._fmt_max_abs))
         self._var_min = tk.StringVar(value=str(self._fmt_min_abs))
         self._var_show_shortcuts = tk.IntVar(value=1 if self._opt_show_shortcuts else 0)
+        self._var_show_labels = tk.IntVar(value=1 if self._opt_show_labels else 0)
 
         self._var_def_source_v = tk.StringVar(value=str(self.defaults.get("socket_V", 5.0)))
         self._var_def_source_iwarn = tk.StringVar(value=str(self.defaults.get("socket_Iwarn", 5.0)))
@@ -1862,7 +2113,7 @@ class CircuitGUI:
         lbl = mk_label("opt_format"); lbl.grid(row=row, column=0, sticky=tk.W, pady=2); w["lbl_opt_format"] = lbl
         cb = ttk.Combobox(frm, state="readonly", width=12)
         cb.config(values=[self.tr("opt_fmt_si"), self.tr("opt_fmt_sci")])
-        cb.current(0)
+        cb.current(0 if str(self._fmt_style) != "sci" else 1)
         w["cb_opt_format"] = cb
 
         def on_fmt(_e):
@@ -1891,38 +2142,44 @@ class CircuitGUI:
         w["chk_show_shortcuts"] = chk
 
         row += 1
+        chk2 = ttk.Checkbutton(frm, text=self.tr("opt_show_labels"), variable=self._var_show_labels)
+        chk2.i18n_key = "opt_show_labels"
+        chk2.grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=(0, 8))
+        w["chk_show_labels"] = chk2
+
+        row += 1
         sep = ttk.Separator(frm, orient=tk.HORIZONTAL)
         sep.grid(row=row, column=0, columnspan=2, sticky=tk.EW, pady=6)
 
         row += 1
         lbl = mk_label("opt_defaults"); lbl.grid(row=row, column=0, sticky=tk.W, pady=2); w["lbl_opt_defaults"] = lbl
 
-        def mk_kv(r, k, var):
-            lab = mk_label(k)
+        def mk_kv(r, widget_key: str, i18n_key: str, var):
+            lab = mk_label(i18n_key)
             lab.grid(row=r, column=0, sticky=tk.W, pady=1)
-            w[f"lbl_{k}"] = lab
+            w[f"lbl_{widget_key}"] = lab
             ttk.Entry(frm, textvariable=var, width=12).grid(row=r, column=1, sticky=tk.W, pady=1)
 
         row += 1
-        mk_kv(row, "def_source_v", self._var_def_source_v)
+        mk_kv(row, "def_source_v", "opt_def_source_v", self._var_def_source_v)
         row += 1
-        mk_kv(row, "def_source_iwarn", self._var_def_source_iwarn)
+        mk_kv(row, "def_source_iwarn", "opt_def_source_iwarn", self._var_def_source_iwarn)
         row += 1
-        mk_kv(row, "def_res_r", self._var_def_res_r)
+        mk_kv(row, "def_res_r", "opt_def_res_r", self._var_def_res_r)
         row += 1
-        mk_kv(row, "def_rheo_r", self._var_def_rheo_r)
+        mk_kv(row, "def_rheo_r", "opt_def_rheo_r", self._var_def_rheo_r)
         row += 1
-        mk_kv(row, "def_rheo_min", self._var_def_rheo_min)
+        mk_kv(row, "def_rheo_min", "opt_def_rheo_min", self._var_def_rheo_min)
         row += 1
-        mk_kv(row, "def_rheo_max", self._var_def_rheo_max)
+        mk_kv(row, "def_rheo_max", "opt_def_rheo_max", self._var_def_rheo_max)
         row += 1
-        mk_kv(row, "def_amm_burden", self._var_def_amm_burden)
+        mk_kv(row, "def_amm_burden", "opt_def_amm_burden", self._var_def_amm_burden)
         row += 1
-        mk_kv(row, "def_volt_sens", self._var_def_volt_sens)
+        mk_kv(row, "def_volt_sens", "opt_def_volt_sens", self._var_def_volt_sens)
         row += 1
-        mk_kv(row, "def_gal_r", self._var_def_gal_r)
+        mk_kv(row, "def_gal_r", "opt_def_gal_r", self._var_def_gal_r)
         row += 1
-        mk_kv(row, "def_gal_ifs", self._var_def_gal_ifs)
+        mk_kv(row, "def_gal_ifs", "opt_def_gal_ifs", self._var_def_gal_ifs)
 
         row += 1
         btn = ttk.Button(frm, text=self.tr("apply"), command=self._apply_options)
@@ -1954,6 +2211,10 @@ class CircuitGUI:
             self._opt_show_shortcuts = bool(int(self._var_show_shortcuts.get()))
         except Exception:
             self._opt_show_shortcuts = True
+        try:
+            self._opt_show_labels = bool(int(self._var_show_labels.get()))
+        except Exception:
+            self._opt_show_labels = True
 
         def setd(key, var):
             try:
